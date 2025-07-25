@@ -17,7 +17,8 @@ class esPod
     friend class L0x04;
 
 public:
-    typedef void playStatusHandler_t(byte playControlCommand);
+    // Callback that feeds A2DP-style commands to an external entity, called by esPod instance
+    typedef void playStatusHandler_t(A2DP_PB_CMD playControlCommand);
 
     // State variables
     bool extendedInterfaceModeActive = false;
@@ -102,7 +103,7 @@ private:
     const char *_serialNumber = ESPOD_SN;
 
 
-    // Handler functions
+    // Handler functions : generally external, aimed at allowing the esPod instance to modify things that are not included
     playStatusHandler_t *_playStatusHandler = nullptr;
 
 public:
