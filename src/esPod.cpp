@@ -4,8 +4,7 @@
 //|                      Cardinal tasks and Timers                      |
 //-----------------------------------------------------------------------
 #pragma region Tasks
-/// @brief RX Task, sifts through the incoming serial data and compiles packets that pass the checksum and passes them to the processing Queue _cmdQueue. Also handles timeouts and can trigger state resets.
-/// @param pvParameters Unused
+
 void esPod::_rxTask(void *pvParameters)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvParameters);
@@ -150,8 +149,6 @@ void esPod::_rxTask(void *pvParameters)
     }
 }
 
-/// @brief Processor task retrieving from the cmdQueue and processing the commands
-/// @param pvParameters
 void esPod::_processTask(void *pvParameters)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvParameters);
@@ -200,8 +197,6 @@ void esPod::_processTask(void *pvParameters)
     }
 }
 
-/// @brief Transmit task, retrieves from the txQueue and sends the packets over Serial at high priority but wider timing
-/// @param pvParameters
 void esPod::_txTask(void *pvParameters)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvParameters);
@@ -259,8 +254,6 @@ void esPod::_txTask(void *pvParameters)
     }
 }
 
-/// @brief Low priority task to queue acks *outside* of the timer interrupt context
-/// @param pvParameters
 void esPod::_timerTask(void *pvParameters)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvParameters);
@@ -282,6 +275,10 @@ void esPod::_timerTask(void *pvParameters)
                 if (msg.cmdID == esPodInstance->trackChangeAckPending)
                 {
                     esPodInstance->trackChangeAckPending = 0x00;
+                    esPodInstance->_albumNameUpdated = false;
+                    esPodInstance->_artistNameUpdated = false;
+                    esPodInstance->_trackTitleUpdated = false;
+                    esPodInstance->_trackDurationUpdated = false;
                 }
             }
             else if (msg.targetLingo == 0x03)
@@ -291,6 +288,10 @@ void esPod::_timerTask(void *pvParameters)
                 if (msg.cmdID == esPodInstance->trackChangeAckPending)
                 {
                     esPodInstance->trackChangeAckPending = 0x00;
+                    esPodInstance->_albumNameUpdated = false;
+                    esPodInstance->_artistNameUpdated = false;
+                    esPodInstance->_trackTitleUpdated = false;
+                    esPodInstance->_trackDurationUpdated = false;
                 }
             }
         }
@@ -301,8 +302,6 @@ void esPod::_timerTask(void *pvParameters)
 
 #pragma region Timer Callbacks
 
-/// @brief Callback for L0x00 pending Ack timer
-/// @param xTimer
 void esPod::_pendingTimerCallback_0x00(TimerHandle_t xTimer)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
@@ -310,8 +309,6 @@ void esPod::_pendingTimerCallback_0x00(TimerHandle_t xTimer)
     xQueueSendFromISR(esPodInstance->_timerQueue, &msg, NULL);
 }
 
-/// @brief Callback for L0x03 pending Ack timer
-/// @param xTimer
 void esPod::_pendingTimerCallback_0x03(TimerHandle_t xTimer)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
@@ -319,8 +316,6 @@ void esPod::_pendingTimerCallback_0x03(TimerHandle_t xTimer)
     xQueueSendFromISR(esPodInstance->_timerQueue, &msg, NULL);
 }
 
-/// @brief Callback for L0x04 pending Ack timer
-/// @param xTimer
 void esPod::_pendingTimerCallback_0x04(TimerHandle_t xTimer)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
@@ -333,10 +328,7 @@ void esPod::_pendingTimerCallback_0x04(TimerHandle_t xTimer)
 //|                          Packet management                          |
 //-----------------------------------------------------------------------
 #pragma region Packet management
-/// @brief //Calculates the checksum of a packet that starts from i=0 ->Lingo to i=len -> Checksum
-/// @param byteArray Array from Lingo byte to Checksum byte
-/// @param len Length of array (Lingo byte to Checksum byte)
-/// @return Calculated checksum for comparison
+
 byte esPod::_checksum(const byte *byteArray, uint32_t len)
 {
     uint32_t tempChecksum = len;
@@ -348,9 +340,6 @@ byte esPod::_checksum(const byte *byteArray, uint32_t len)
     return (byte)tempChecksum;
 }
 
-/// @brief Composes and sends a packet over the _targetSerial
-/// @param byteArray Array to send, starting with the Lingo byte and without the checksum byte
-/// @param len Length of the array to send
 void esPod::_sendPacket(const byte *byteArray, uint32_t len)
 {
     uint32_t finalLength = len + 4;
@@ -368,9 +357,6 @@ void esPod::_sendPacket(const byte *byteArray, uint32_t len)
     _targetSerial.write(tempBuf, finalLength);
 }
 
-/// @brief Adds a packet to the transmit queue
-/// @param byteArray Array of bytes to add to the queue
-/// @param len Length of data in the array
 void esPod::_queuePacket(const byte *byteArray, uint32_t len)
 {
     aapCommand cmdToQueue;
@@ -386,9 +372,6 @@ void esPod::_queuePacket(const byte *byteArray, uint32_t len)
     }
 }
 
-/// @brief Adds a packet to the transmit queue, but at the front for immediate processing
-/// @param byteArray Array of bytes to add to the queue
-/// @param len Length of data in the array
 void esPod::_queuePacketToFront(const byte *byteArray, uint32_t len)
 {
     aapCommand cmdToQueue;
@@ -404,9 +387,6 @@ void esPod::_queuePacketToFront(const byte *byteArray, uint32_t len)
     }
 }
 
-/// @brief Processes a valid packet and calls the relevant Lingo processor
-/// @param byteArray Checksum-validated packet starting at LingoID
-/// @param len Length of valid data in the packet
 void esPod::_processPacket(const byte *byteArray, uint32_t len)
 {
     byte rxLingoID = byteArray[0];
@@ -415,22 +395,22 @@ void esPod::_processPacket(const byte *byteArray, uint32_t len)
     switch (rxLingoID) // 0x00 is general Lingo and 0x04 is extended Lingo. Nothing else is expected from the Mini
     {
     case 0x00: // General Lingo
-        ESP_LOGD(IPOD_TAG, "Lingo 0x00 Packet in processor,payload length: %d", subPayloadLen);
+        ESP_LOGD(__func__, "Lingo 0x00 Packet in processor,payload length: %d", subPayloadLen);
         L0x00::processLingo(this, subPayload, subPayloadLen);
         break;
 
     case 0x03: // Display Remote Lingo
-        ESP_LOGD(IPOD_TAG, "Lingo 0x03 Packet in processor,payload length: %d", subPayloadLen);
+        ESP_LOGD(__func__, "Lingo 0x03 Packet in processor,payload length: %d", subPayloadLen);
         L0x03::processLingo(this, subPayload, subPayloadLen);
         break;
 
     case 0x04: // Extended Interface Lingo
-        ESP_LOGD(IPOD_TAG, "Lingo 0x04 Packet in processor,payload length: %d", subPayloadLen);
+        ESP_LOGD(__func__, "Lingo 0x04 Packet in processor,payload length: %d", subPayloadLen);
         L0x04::processLingo(this, subPayload, subPayloadLen);
         break;
 
     default:
-        ESP_LOGW(IPOD_TAG, "Unknown Lingo packet : L0x%02x 0x%02x", rxLingoID, byteArray[1]);
+        ESP_LOGW(__func__, "Unknown Lingo packet : L0x%02x 0x%02x", rxLingoID, byteArray[1]);
         break;
     }
 }
@@ -440,8 +420,40 @@ void esPod::_processPacket(const byte *byteArray, uint32_t len)
 //|         Constructor, reset, attachCallback for PB control           |
 //-----------------------------------------------------------------------
 #pragma region Constructor, destructor, reset and external PB Contoller attach
-/// @brief Constructor for the esPod class
-/// @param targetSerial (Serial) stream on which the esPod will be communicating
+void esPod::_checkAllMetaUpdated()
+{
+    if (_albumNameUpdated && _artistNameUpdated && _trackTitleUpdated && _trackDurationUpdated)
+    {
+        // If all fields have received at least one update and the
+        // trackChangeAckPending is still hanging. The failsafe for this one is
+        // in the espod _processTask
+        if (trackChangeAckPending > 0x00)
+        {
+            ESP_LOGD(__func__, "Artist+Album+Title+Duration +++ ACK Pending 0x%x\n\tPending duration: %d", trackChangeAckPending, millis() - trackChangeTimestamp);
+            if (trackChangeAckPending == 0x11)
+            {
+                L0x03::_0x00_iPodAck(this, iPodAck_OK, trackChangeAckPending);
+            }
+            else
+            {
+                L0x04::_0x01_iPodAck(this, iPodAck_OK, trackChangeAckPending);
+            }
+            trackChangeAckPending = 0x00;
+            ESP_LOGD(__func__, "trackChangeAckPending reset to 0x00");
+        }
+        _albumNameUpdated = false;
+        _artistNameUpdated = false;
+        _trackTitleUpdated = false;
+        _trackDurationUpdated = false;
+        ESP_LOGD(__func__, "Artist+Album+Title+Duration : True -> False");
+        // Inform the car
+        if (playStatusNotificationState == NOTIF_ON)
+        {
+            L0x04::_0x27_PlayStatusNotification(this, 0x01, currentTrackIndex);
+        }
+    }
+}
+
 esPod::esPod(Stream &targetSerial)
     : _targetSerial(targetSerial)
 {
@@ -452,7 +464,7 @@ esPod::esPod(Stream &targetSerial)
 
     if (_cmdQueue == NULL || _txQueue == NULL || _timerQueue == NULL) // Add _timerQueue check
     {
-        ESP_LOGE(IPOD_TAG, "Could not create queues");
+        ESP_LOGE(__func__, "Could not create queues");
     }
 
     // Create FreeRTOS tasks for compiling incoming commands, processing commands and transmitting commands
@@ -465,7 +477,7 @@ esPod::esPod(Stream &targetSerial)
 
         if (_rxTaskHandle == NULL || _processTaskHandle == NULL || _txTaskHandle == NULL || _timerTaskHandle == NULL)
         {
-            ESP_LOGE(IPOD_TAG, "Could not create tasks");
+            ESP_LOGE(__func__, "Could not create tasks");
         }
         else
         {
@@ -474,17 +486,16 @@ esPod::esPod(Stream &targetSerial)
             _pendingTimer_0x04 = xTimerCreate("Pending Timer 0x04", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x04);
             if (_pendingTimer_0x00 == NULL || _pendingTimer_0x03 == NULL || _pendingTimer_0x04 == NULL)
             {
-                ESP_LOGE(IPOD_TAG, "Could not create timers");
+                ESP_LOGE(__func__, "Could not create timers");
             }
         }
     }
     else
     {
-        ESP_LOGE(IPOD_TAG, "Could not create tasks, queues not created");
+        ESP_LOGE(__func__, "Could not create tasks, queues not created");
     }
 }
 
-/// @brief Destructor for the esPod class. Normally not used.
 esPod::~esPod()
 {
     aapCommand tempCmd;
@@ -520,7 +531,7 @@ esPod::~esPod()
 void esPod::resetState()
 {
 
-    ESP_LOGW(IPOD_TAG, "esPod resetState called");
+    ESP_LOGW(__func__, "esPod resetState called");
     // State variables
     extendedInterfaceModeActive = false;
 
@@ -528,6 +539,12 @@ void esPod::resetState()
     trackDuration = 1;
     prevTrackDuration = 1;
     playPosition = 0;
+
+    // Flags for track change management
+    _albumNameUpdated = false;
+    _artistNameUpdated = false;
+    _trackTitleUpdated = false;
+    _trackDurationUpdated = false;
 
     // Playback Engine
     playStatus = PB_STATE_PAUSED;
@@ -574,7 +591,156 @@ void esPod::resetState()
 void esPod::attachPlayControlHandler(playStatusHandler_t playHandler)
 {
     _playStatusHandler = playHandler;
-    ESP_LOGD(IPOD_TAG, "PlayControlHandler attached.");
+    ESP_LOGD(__func__, "PlayControlHandler attached.");
 }
-#pragma endregion
 
+void esPod::play()
+{
+    playStatus = PB_STATE_PLAYING;
+    ESP_LOGD(__func__, "esPod set to play.");
+}
+
+void esPod::pause()
+{
+    playStatus = PB_STATE_PAUSED;
+    ESP_LOGD(__func__, "esPod paused.");
+}
+
+void esPod::stop()
+{
+    playStatus = PB_STATE_STOPPED;
+    ESP_LOGD(__func__, " esPod stopped.");
+}
+
+void esPod::updatePlayPosition(uint32_t position)
+{
+    playPosition = position;
+    if (playStatusNotificationState == NOTIF_ON && trackChangeAckPending == 0x00)
+        L0x04::_0x27_PlayStatusNotification(this, 0x04, position);
+}
+
+void esPod::updateAlbumName(const char *incAlbumName)
+{
+    if (trackChangeAckPending > 0x00) // There is a pending track change ack
+    {
+        if (!_albumNameUpdated)
+        {
+            strcpy(albumName, incAlbumName);
+            _albumNameUpdated = true;
+            ESP_LOGD(__func__, "Album name update to %s", albumName);
+        }
+        else
+            ESP_LOGD(__func__, "Album name already updated to %s", albumName);
+    }
+    else // There is no pending track change ack : change is coming from phone/AVRC target
+    {
+        if (strcmp(incAlbumName, albumName) != 0) // New Album Name
+        {
+            strcpy(prevAlbumName, albumName); // Preserve the previous album name
+            strcpy(albumName, incAlbumName);  // Copy new album name
+            _albumNameUpdated = true;
+            ESP_LOGD(__func__, "Album name updated to %s", albumName);
+        }
+        else // Not new album name
+            ESP_LOGD(__func__, "Album name already updated to %s", albumName);
+    }
+    _checkAllMetaUpdated();
+}
+
+void esPod::updateArtistName(const char *incArtistName)
+{
+    if (trackChangeAckPending > 0x00) // There is a pending track change ack
+    {
+        if (!_artistNameUpdated)
+        {
+            strcpy(artistName, incArtistName);
+            _artistNameUpdated = true;
+            ESP_LOGD(__func__, "Artist name update to %s", artistName);
+        }
+        else
+            ESP_LOGD(__func__, "Artist name already updated to %s", artistName);
+    }
+    else // There is no pending track change ack : change is coming from phone/AVRC target
+    {
+        if (strcmp(incArtistName, artistName) != 0) // New Artist Name
+        {
+            strcpy(prevArtistName, artistName); // Preserve the previous artist name
+            strcpy(artistName, incArtistName);  // Copy new artist name
+            _artistNameUpdated = true;
+            ESP_LOGD(__func__, "Artist name updated to %s", artistName);
+        }
+        else // Not new artist name
+            ESP_LOGD(__func__, "Artist name already updated to %s", artistName);
+    }
+    _checkAllMetaUpdated();
+}
+
+void esPod::updateTrackTitle(const char *incTrackTitle)
+{
+    if (trackChangeAckPending > 0x00) // There is a pending metadata update
+    {
+        if (!_trackTitleUpdated) // Track title not yet updated
+        {
+            strcpy(trackTitle, incTrackTitle);
+            _trackTitleUpdated = true;
+            ESP_LOGD(__func__, "Title update to %s", trackTitle);
+        }
+        else
+            ESP_LOGD(__func__, "Title already updated to %s", trackTitle);
+    }
+    else // There is no pending track change ack : change is coming from phone/AVRC target.
+    {
+        if (strcmp(incTrackTitle, trackTitle) != 0) // New track title, we assume it's a NEXT track because otherwise the comparison logic becomes heavy
+        {
+            // Assume it is Next, perform cursor operations
+            trackListPosition = (trackListPosition + 1) % TOTAL_NUM_TRACKS;
+            prevTrackIndex = currentTrackIndex;
+            currentTrackIndex = (currentTrackIndex + 1) % TOTAL_NUM_TRACKS;
+            trackList[trackListPosition] = (currentTrackIndex);
+
+            strcpy(prevTrackTitle, trackTitle); // Preserve the previous track title
+            strcpy(trackTitle, incTrackTitle);  // Update the new track title
+            _trackTitleUpdated = true;
+            ESP_LOGD(__func__, "Title update to %s", trackTitle);
+            // ESP_LOGD("AVRC_CB",
+            //          "Title rxed, NO ACK pending, AUTONEXT, trackTitleUpdated "
+            //          "to %s\n\ttrackPos %d trackIndex %d",
+            //          trackTitle, trackListPosition, currentTrackIndex);
+        }
+        else // Track title is identical, no movement
+        {
+            ESP_LOGD(__func__, "Title already updated to : %s", trackTitle);
+        }
+    }
+    _checkAllMetaUpdated();
+}
+
+void esPod::updateTrackDuration(uint32_t incTrackDuration)
+{
+    if (trackChangeAckPending > 0x00) // There is a pending metadata update
+    {
+        if (!_trackDurationUpdated) // Track duration not yet updated
+        {
+            trackDuration = incTrackDuration;
+            _trackDurationUpdated = true;
+            ESP_LOGD(__func__, "Track duration updated to %d", trackDuration);
+        }
+        else
+            ESP_LOGD(__func__, "Track duration already updated to %d", trackDuration);
+    }
+    else // There is no pending track change ack : change is coming from phone/AVRC target.
+    {
+        if (incTrackDuration != trackDuration) // Different incoming metadata
+        {
+            prevTrackDuration = trackDuration; // Preserve the current value
+            trackDuration = incTrackDuration;  // Then updated it
+            _trackDurationUpdated = true;
+            ESP_LOGD(__func__, "Track duration updated to %d", trackDuration);
+        }
+        else
+            ESP_LOGD(__func__, "Track duration already updated to %d", trackDuration);
+    }
+    _checkAllMetaUpdated();
+}
+
+#pragma endregion

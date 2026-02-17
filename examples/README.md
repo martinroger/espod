@@ -1,0 +1,1 @@
+For a complete implementation example of how to use this, including interfacing the library with the ESP32 A2DP BT streaming capabilities, refer to [this repository](https://github.com/martinroger/ipodesp32).

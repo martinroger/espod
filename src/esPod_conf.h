@@ -2,11 +2,8 @@
 #include "Arduino.h"
 
 // ESPiPod instance name
-#ifndef ESPOD_NAME
-#define ESPOD_NAME "ipodESP32"
-#endif
-#ifndef ESPOD_SN
-#define ESPOD_SN "AB345F7HIJK"
+#ifndef ESPIPOD_NAME
+#define ESPIPOD_NAME "ipodESP32"
 #endif
 
 // Serial settings
@@ -14,7 +11,7 @@
 #define MAX_PACKET_SIZE 1024
 #endif
 #ifndef SERIAL_TIMEOUT
-#define SERIAL_TIMEOUT 2500
+#define SERIAL_TIMEOUT 8000
 #endif
 #ifndef INTERBYTE_TIMEOUT
 #define INTERBYTE_TIMEOUT 500
