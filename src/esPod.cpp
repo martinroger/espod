@@ -184,7 +184,7 @@ void esPod::_processTask(void *pvParameters)
             vTaskDelay(pdMS_TO_TICKS(2 * PROCESS_INTERVAL_MS));
             continue;
         }
-        if (xQueueReceive(esPodInstance->_cmdQueue, &incCmd, 0) == pdTRUE) // Non blocking receive
+        if (xQueueReceive(esPodInstance->_cmdQueue, &incCmd, pdMS_TO_TICKS(500)) == pdTRUE) // Non blocking receive
         {
             // Process the command
             esPodInstance->_processPacket(incCmd.payload, incCmd.length);
@@ -193,7 +193,7 @@ void esPod::_processTask(void *pvParameters)
             incCmd.payload = nullptr;
             incCmd.length = 0;
         }
-        vTaskDelay(pdMS_TO_TICKS(PROCESS_INTERVAL_MS));
+        // vTaskDelay(pdMS_TO_TICKS(PROCESS_INTERVAL_MS));
     }
 }
 
@@ -235,7 +235,7 @@ void esPod::_txTask(void *pvParameters)
         if (!esPodInstance->_rxIncomplete && esPodInstance->_pendingCmdId_0x00 == 0x00 && esPodInstance->_pendingCmdId_0x03 == 0x00 && esPodInstance->_pendingCmdId_0x04 == 0x00) //_rxTask is not in the middle of a packet, there isn't a valid pending for either lingoes
         {
             // Retrieve from the queue and send the packet
-            if (xQueueReceive(esPodInstance->_txQueue, &txCmd, 0) == pdTRUE)
+            if (xQueueReceive(esPodInstance->_txQueue, &txCmd, pdMS_TO_TICKS(1000)) == pdTRUE)
             {
                 // vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
                 // Send the packet
@@ -245,11 +245,11 @@ void esPod::_txTask(void *pvParameters)
                 txCmd.payload = nullptr;
                 txCmd.length = 0;
             }
-            vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
+            // vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
         }
         else
         {
-            vTaskDelay(pdMS_TO_TICKS(RX_TASK_INTERVAL_MS));
+            vTaskDelay(pdMS_TO_TICKS(RX_TASK_INTERVAL_MS)); // Safety delay if _rxIncomplete for instance
         }
     }
 }
