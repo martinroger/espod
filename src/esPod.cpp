@@ -229,7 +229,7 @@ void esPod::_txTask(void *pvParameters)
                 txCmd.payload = nullptr;
                 txCmd.length = 0;
             }
-            vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
+            // vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
             continue;
         }
         if (!esPodInstance->_rxIncomplete && esPodInstance->_pendingCmdId_0x00 == 0x00 && esPodInstance->_pendingCmdId_0x03 == 0x00 && esPodInstance->_pendingCmdId_0x04 == 0x00) //_rxTask is not in the middle of a packet, there isn't a valid pending for either lingoes
@@ -261,7 +261,7 @@ void esPod::_timerTask(void *pvParameters)
 
     while (true)
     {
-        if (xQueueReceive(esPodInstance->_timerQueue, &msg, 0) == pdTRUE)
+        if (xQueueReceive(esPodInstance->_timerQueue, &msg, portMAX_DELAY) == pdTRUE)
         {
             if (msg.targetLingo == 0x00)
             {
@@ -295,7 +295,7 @@ void esPod::_timerTask(void *pvParameters)
                 }
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(TIMER_INTERVAL_MS));
+        // vTaskDelay(pdMS_TO_TICKS(TIMER_INTERVAL_MS));
     }
 }
 #pragma endregion
