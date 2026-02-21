@@ -109,12 +109,10 @@ private:
     bool _trackDurationUpdated = false; // Internal flag if the trackDuration has been updated. Used to send relevant notifications if necessary
     void _checkAllMetaUpdated();
 
+    // FreeRTOS Queues and RingBuffer
     RingbufHandle_t _cmdRingBuffer; // Incoming commands ring buffer from accessory (car)
-    
-    // FreeRTOS Queues
-    QueueHandle_t _cmdQueue;   // Incoming commands queue from accessory (car)
-    QueueHandle_t _txQueue;    // Outgoing response/commands queue from espod to car
-    QueueHandle_t _timerQueue; // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
+    QueueHandle_t _txQueue;         // Outgoing response/commands queue from espod to car
+    QueueHandle_t _timerQueue;      // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
 
     // FreeRTOS tasks (and methods...)
     TaskHandle_t _rxTaskHandle;      // RX task handle (from car)

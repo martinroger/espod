@@ -9,12 +9,12 @@ esPod::esPod(Stream &targetSerial)
     : _targetSerial(targetSerial)
 {
     // Create queues with pointer structures to byte arrays
-    // _cmdQueue = xQueueCreate(CMD_QUEUE_SIZE, sizeof(aapCommand));
+
     _cmdRingBuffer = xRingbufferCreate(CMD_RING_BUF_SIZE, RINGBUF_TYPE_NOSPLIT);
     _txQueue = xQueueCreate(TX_QUEUE_SIZE, sizeof(aapCommand));
     _timerQueue = xQueueCreate(TIMER_QUEUE_SIZE, sizeof(TimerCallbackMessage));
 
-    if (/*_cmdQueue == NULL ||*/ _txQueue == NULL || _timerQueue == NULL || _cmdRingBuffer == NULL) // If one failed to create
+    if (_txQueue == NULL || _timerQueue == NULL || _cmdRingBuffer == NULL) // If one failed to create
         ESP_LOGE(__func__, "Could not create queues/ring buffers, tasks will not be created");
     else // If none of them are null, create the tasks
     {
@@ -50,23 +50,17 @@ esPod::~esPod()
     xTimerDelete(_pendingTimer_0x00, 0);
     xTimerDelete(_pendingTimer_0x03, 0);
     xTimerDelete(_pendingTimer_0x04, 0);
-    // Remember to deallocate memory
-    if (_cmdRingBuffer != NULL)
-        vRingbufferDelete(_cmdRingBuffer); // Buffer is direct data, not pointers to the heap. Can directly deallocate it
 
-    // while (xQueueReceive(_cmdQueue, &tempCmd, 0) == pdTRUE)
-    // {
-    //     delete[] tempCmd.payload;
-    //     tempCmd.payload = nullptr;
-    //     tempCmd.length = 0;
-    // }
-    while (xQueueReceive(_txQueue, &tempCmd, 0) == pdTRUE)
+    // Remember to deallocate memory
+    if (_cmdRingBuffer != NULL) // Buffer is direct data, not pointers to the heap. Can directly deallocate it
+        vRingbufferDelete(_cmdRingBuffer);
+
+    while (xQueueReceive(_txQueue, &tempCmd, 0) == pdTRUE) // This queue is full of pointers to heap. Gotta free the heap first
     {
         delete[] tempCmd.payload;
         tempCmd.payload = nullptr;
         tempCmd.length = 0;
     }
-    // vQueueDelete(_cmdQueue);
     vQueueDelete(_txQueue);
     vQueueDelete(_timerQueue);
 }
@@ -107,19 +101,12 @@ void esPod::resetState()
     aapCommand tempCmd;
 
     // Remember to deallocate memory
-    // while (xQueueReceive(_cmdQueue, &tempCmd, 0) == pdTRUE)
-    // {
-    //     delete[] tempCmd.payload;
-    //     tempCmd.payload = nullptr;
-    //     tempCmd.length = 0;
-    // }
     while (xQueueReceive(_txQueue, &tempCmd, 0) == pdTRUE)
     {
         delete[] tempCmd.payload;
         tempCmd.payload = nullptr;
         tempCmd.length = 0;
     }
-    // xQueueReset(_cmdQueue);
     xQueueReset(_txQueue);
     // Reset Ring buffer
     size_t tempSize;
@@ -347,8 +334,6 @@ void esPod::_rxTask(void *pvParameters)
     unsigned long lastByteRX = millis();   // Last time a byte was RXed in a packet
     unsigned long lastActivity = millis(); // Last time any RX activity was detected
 
-    // aapCommand cmd;
-
 #ifdef STACK_HIGH_WATERMARK_LOG
     UBaseType_t uxHighWaterMark;
     UBaseType_t minHightWaterMark = RX_TASK_STACK_SIZE;
@@ -426,25 +411,10 @@ void esPod::_rxTask(void *pvParameters)
                             {
                                 // Checksum is correct, send the packet to the processing queue
                                 // RingBuffer method
-                                if (xRingbufferSend(esPodInstance->_cmdRingBuffer,buf,expLength,pdMS_TO_TICKS(5))!=pdTRUE)
-                                    ESP_LOGW(__func__,"Ringbuffer full, dropping packet");
+                                if (xRingbufferSend(esPodInstance->_cmdRingBuffer, buf, expLength, pdMS_TO_TICKS(5)) != pdTRUE)
+                                    ESP_LOGW(__func__, "Ringbuffer full, dropping packet");
                                 else
-                                    ESP_LOGD(__func__,"Packet sent to RingBuffer");
-                                // Allocate memory for the payload so it doesn't become out of scope
-                                // cmd.payload = new byte[expLength];
-                                // cmd.length = expLength;
-                                // memcpy(cmd.payload, buf, expLength);
-                                // if (xQueueSend(esPodInstance->_cmdQueue, &cmd, pdMS_TO_TICKS(5)) == pdTRUE)
-                                // {
-                                //     ESP_LOGD(__func__, "Packet received and sent to processing queue");
-                                // }
-                                // else
-                                // {
-                                //     ESP_LOGW(__func__, "Packet received but could not be sent to processing queue. Discarding");
-                                //     delete[] cmd.payload;
-                                //     cmd.payload = nullptr;
-                                //     cmd.length = 0;
-                                // }
+                                    ESP_LOGD(__func__, "Packet sent to RingBuffer");
                             }
                             else // Checksum mismatch
                             {
@@ -486,7 +456,6 @@ void esPod::_rxTask(void *pvParameters)
 void esPod::_processTask(void *pvParameters)
 {
     esPod *esPodInstance = static_cast<esPod *>(pvParameters);
-    // aapCommand incCmd;
     size_t incCmdSize;
 
 #ifdef STACK_HIGH_WATERMARK_LOG
@@ -505,38 +474,14 @@ void esPod::_processTask(void *pvParameters)
             ESP_LOGI("HWM", "Process Task High Watermark: %d, used stack: %d", minHightWaterMark, PROCESS_TASK_STACK_SIZE - minHightWaterMark);
         }
 #endif
-        byte* incCmd = (byte*)xRingbufferReceive(esPodInstance->_cmdRingBuffer,&incCmdSize,portMAX_DELAY);
+        byte *incCmd = (byte *)xRingbufferReceive(esPodInstance->_cmdRingBuffer, &incCmdSize, portMAX_DELAY);
 
         if (incCmd != NULL)
         {
             if (!esPodInstance->disabled)
-                esPodInstance->_processPacket(incCmd,incCmdSize);
-            vRingbufferReturnItem(esPodInstance->_cmdRingBuffer,(void*)incCmd);
+                esPodInstance->_processPacket(incCmd, incCmdSize);
+            vRingbufferReturnItem(esPodInstance->_cmdRingBuffer, (void *)incCmd);
         }
-
-        // // If the esPod is disabled, check the queue and purge it before jumping to the next cycle
-        // if (esPodInstance->disabled)
-        // {
-        //     while (xQueueReceive(esPodInstance->_cmdQueue, &incCmd, 0) == pdTRUE) // Non blocking receive
-        //     {
-        //         // Do not process, just free the memory
-        //         delete[] incCmd.payload;
-        //         incCmd.payload = nullptr;
-        //         incCmd.length = 0;
-        //     }
-        //     vTaskDelay(pdMS_TO_TICKS(2 * PROCESS_INTERVAL_MS)); // Necessary for feeding the watchdog
-        //     continue;
-        // }
-        // if (xQueueReceive(esPodInstance->_cmdQueue, &incCmd, pdMS_TO_TICKS(500)) == pdTRUE) // Non blocking receive
-        // {
-        //     // Process the command
-        //     esPodInstance->_processPacket(incCmd.payload, incCmd.length);
-        //     // Free the memory allocated for the payload
-        //     delete[] incCmd.payload;
-        //     incCmd.payload = nullptr;
-        //     incCmd.length = 0;
-        // }
-        // vTaskDelay(pdMS_TO_TICKS(PROCESS_INTERVAL_MS));
     }
 }
 
@@ -562,38 +507,59 @@ void esPod::_txTask(void *pvParameters)
         }
 #endif
 
-        // If the esPod is disabled, check the queue and purge it before jumping to the next cycle
-        if (esPodInstance->disabled)
+        // Retrieve from the queue and send the packet
+        if (xQueueReceive(esPodInstance->_txQueue, &txCmd, portMAX_DELAY) == pdTRUE)
         {
-            while (xQueueReceive(esPodInstance->_txQueue, &txCmd, 0) == pdTRUE)
+            if (!esPodInstance->disabled)
             {
-                // Do not process, just free the memory
-                delete[] txCmd.payload;
-                txCmd.payload = nullptr;
-                txCmd.length = 0;
-            }
-            vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS)); // Necessary for watchdog
-            continue;
-        }
-        if (!esPodInstance->_rxIncomplete && esPodInstance->_pendingCmdId_0x00 == 0x00 && esPodInstance->_pendingCmdId_0x03 == 0x00 && esPodInstance->_pendingCmdId_0x04 == 0x00) //_rxTask is not in the middle of a packet, there isn't a valid pending for either lingoes
-        {
-            // Retrieve from the queue and send the packet
-            if (xQueueReceive(esPodInstance->_txQueue, &txCmd, pdMS_TO_TICKS(1000)) == pdTRUE)
-            {
-                // vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
+                while (!(
+                    !esPodInstance->_rxIncomplete &&
+                    esPodInstance->_pendingCmdId_0x00 == 0x00 &&
+                    esPodInstance->_pendingCmdId_0x03 == 0x00 &&
+                    esPodInstance->_pendingCmdId_0x04 == 0x00))
+                {
+                    // Yield until true
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
                 // Send the packet
                 esPodInstance->_sendPacket(txCmd.payload, txCmd.length);
-                // Free the memory allocated for the payload
-                delete[] txCmd.payload;
-                txCmd.payload = nullptr;
-                txCmd.length = 0;
             }
-            // vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS));
+            // Free the memory allocated for the payload
+            delete[] txCmd.payload;
+            txCmd.payload = nullptr;
+            txCmd.length = 0;
         }
-        else
-        {
-            vTaskDelay(pdMS_TO_TICKS(RX_TASK_INTERVAL_MS)); // Safety delay if _rxIncomplete for instance
-        }
+
+        // // If the esPod is disabled, check the queue and purge it before jumping to the next cycle
+        // if (esPodInstance->disabled)
+        // {
+        //     while (xQueueReceive(esPodInstance->_txQueue, &txCmd, 0) == pdTRUE)
+        //     {
+        //         // Do not process, just free the memory
+        //         delete[] txCmd.payload;
+        //         txCmd.payload = nullptr;
+        //         txCmd.length = 0;
+        //     }
+        //     vTaskDelay(pdMS_TO_TICKS(TX_INTERVAL_MS)); // Necessary for watchdog
+        //     continue;
+        // }
+        // if (!esPodInstance->_rxIncomplete && esPodInstance->_pendingCmdId_0x00 == 0x00 && esPodInstance->_pendingCmdId_0x03 == 0x00 && esPodInstance->_pendingCmdId_0x04 == 0x00) //_rxTask is not in the middle of a packet, there isn't a valid pending for either lingoes
+        // {
+        //     // Retrieve from the queue and send the packet
+        //     if (xQueueReceive(esPodInstance->_txQueue, &txCmd, pdMS_TO_TICKS(1000)) == pdTRUE)
+        //     {
+        //         // Send the packet
+        //         esPodInstance->_sendPacket(txCmd.payload, txCmd.length);
+        //         // Free the memory allocated for the payload
+        //         delete[] txCmd.payload;
+        //         txCmd.payload = nullptr;
+        //         txCmd.length = 0;
+        //     }
+        // }
+        // else
+        // {
+        //     vTaskDelay(pdMS_TO_TICKS(RX_TASK_INTERVAL_MS)); // Safety delay if _rxIncomplete for instance
+        // }
     }
 }
 
@@ -638,7 +604,6 @@ void esPod::_timerTask(void *pvParameters)
                 }
             }
         }
-        // vTaskDelay(pdMS_TO_TICKS(TIMER_INTERVAL_MS)); // Replaced by timeout in the queue
     }
 }
 #pragma endregion
