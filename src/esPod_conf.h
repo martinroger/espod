@@ -7,6 +7,12 @@
 #endif
 
 // Serial settings
+#ifndef UART_RX_BUF_SIZE
+#define UART_RX_BUF_SIZE 1024
+#endif
+#ifndef UART_TX_BUF_SIZE
+#define UART_TX_BUF_SIZE 1024
+#endif
 #ifndef MAX_PACKET_SIZE
 #define MAX_PACKET_SIZE 512
 #endif
