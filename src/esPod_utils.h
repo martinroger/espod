@@ -2,16 +2,6 @@
 #include "Arduino.h"
 #include "esPod_conf.h"
 
-// // Possible values for L0x00 0x02 iPodAck
-// #define iPodAck_OK 0x00
-// #define iPodAck_CmdFailed 0x02
-// #define iPodAck_BadParam 0x04
-// #define iPodAck_UnknownID 0x05
-// #define iPodAck_CmdPending 0x06
-// #define iPodAck_TimedOut 0x0F
-// #define iPodAck_CmdUnavail 0x10
-// #define iPodAck_LingoBusy 0x14
-
 #pragma region ENUMS
 
 enum IPOD_ACK_CODE : byte
@@ -78,16 +68,6 @@ enum DB_CATEGORY : byte
     DB_CAT_PODCAST = 0x08
 }; // Just a small selection
 
-enum A2DP_PB_CMD : byte
-{
-    A2DP_STOP = 0x00,
-    A2DP_PLAY = 0x01,
-    A2DP_PAUSE = 0x02,
-    A2DP_REWIND = 0x03,
-    A2DP_NEXT = 0x04,
-    A2DP_PREV = 0x05
-};
-
 enum NOTIF_STATES : byte
 {
     NOTIF_OFF = 0x00,
@@ -96,6 +76,7 @@ enum NOTIF_STATES : byte
 
 #pragma endregion
 
+/// @brief Contains two informations : a pointer to a byte array (payload) and a uint32_t length info of this byte array
 struct aapCommand
 {
     byte *payload = nullptr;

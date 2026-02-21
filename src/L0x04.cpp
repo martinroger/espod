@@ -247,11 +247,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
             ESP_LOGI(__func__, "CMD 0x%04x PlayCurrentSelection index %d", cmdID, tempTrackIndex);
             if (esp->playStatus != PB_STATE_PLAYING)
             {
-                esp->playStatus = PB_STATE_PLAYING; // Playing status forced
-                if (esp->_playStatusHandler)
-                {
-                    esp->_playStatusHandler(A2DP_PLAY); // Send play to the a2dp
-                }
+                esp->play(); // Force play
             }
             if (tempTrackIndex == esp->trackList[(esp->trackListPosition + TOTAL_NUM_TRACKS - 1) % TOTAL_NUM_TRACKS]) // Desired trackIndex is the left entry
             {
@@ -274,7 +270,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREVIOUS_TRACK); // Fire the metadata trigger indirectly
             }
             else if (tempTrackIndex == esp->currentTrackIndex) // Somehow reselecting the current track
             {
@@ -283,7 +279,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREV); // Fire the metadata trigger indirectly
             }
             else // If it is not the previous or the current track, it automatically becomes a next track
             {
@@ -307,7 +303,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_NEXT); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_NEXT_TRACK); // Fire the metadata trigger indirectly
             }
         }
         break;
@@ -321,24 +317,18 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
             {
                 if (esp->playStatus == PB_STATE_PLAYING)
                 {
-                    esp->playStatus = PB_STATE_PAUSED; // Toggle to paused if playing
-                    if (esp->_playStatusHandler)
-                        esp->_playStatusHandler(A2DP_PAUSE);
+                    esp->pause();
                 }
                 else
                 {
-                    esp->playStatus = PB_STATE_PLAYING; // Switch to playing in any other case
-                    if (esp->_playStatusHandler)
-                        esp->_playStatusHandler(A2DP_PLAY);
+                    esp->play();
                 }
                 L0x04::_0x01_iPodAck(esp, iPodAck_OK, cmdID);
             }
             break;
             case PB_CMD_STOP: // Stop
             {
-                esp->playStatus = PB_STATE_STOPPED;
-                if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_STOP);
+                esp->stop();
                 L0x04::_0x01_iPodAck(esp, iPodAck_OK, cmdID);
             }
             break;
@@ -363,7 +353,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_NEXT); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_NEXT_TRACK); // Fire the metadata trigger indirectly
             }
             break;
             case PB_CMD_PREVIOUS_TRACK: // Prev track
@@ -373,7 +363,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREVIOUS_TRACK); // Fire the metadata trigger indirectly
             }
             break;
             case PB_CMD_NEXT: // Next track
@@ -397,7 +387,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_NEXT); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_NEXT_TRACK); // Fire the metadata trigger indirectly
             }
             break;
             case PB_CMD_PREV: // Prev track
@@ -407,28 +397,25 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREVIOUS_TRACK); // Fire the metadata trigger indirectly
             }
             break;
             case PB_CMD_PLAY: // Play... do we need to have an ack pending ?
             {
-                esp->playStatus = PB_STATE_PLAYING;
+                esp->play();
 
                 // Engage the pending ACK for expected metadata
                 esp->trackChangeAckPending = cmdID;
                 esp->trackChangeTimestamp = millis();
                 L0x04::_0x01_iPodAck(esp, iPodAck_CmdPending, cmdID, TRACK_CHANGE_TIMEOUT);
 
-                if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PLAY);
             }
             break;
             case PB_CMD_PAUSE: // Pause
             {
-                esp->playStatus = PB_STATE_PAUSED;
+                esp->pause();
                 L0x04::_0x01_iPodAck(esp, iPodAck_OK, cmdID);
-                if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PAUSE);
+
             }
             break;
             }
@@ -487,11 +474,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
             ESP_LOGI(__func__, "CMD 0x%04x SetCurrentPlayingTrack index %d", cmdID, tempTrackIndex);
             if (esp->playStatus != PB_STATE_PLAYING)
             {
-                esp->playStatus = PB_STATE_PLAYING; // Playing status forced
-                if (esp->_playStatusHandler)
-                {
-                    esp->_playStatusHandler(A2DP_PLAY); // Send play to the a2dp
-                }
+                esp->play();
             }
             if (tempTrackIndex == esp->trackList[(esp->trackListPosition + TOTAL_NUM_TRACKS - 1) % TOTAL_NUM_TRACKS]) // Desired trackIndex is the left entry
             {
@@ -514,7 +497,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREVIOUS_TRACK); // Fire the metadata trigger indirectly
             }
             else if (tempTrackIndex == esp->currentTrackIndex) // Somehow reselecting the current track
             {
@@ -523,7 +506,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_PREV); // Fire the metadata trigger indirectly
             }
             else // If it is not the previous or the current track, it automatically becomes a next track
             {
@@ -547,7 +530,7 @@ void L0x04::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
                 // Fire the A2DP when ready
                 if (esp->_playStatusHandler)
-                    esp->_playStatusHandler(A2DP_NEXT); // Fire the metadata trigger indirectly
+                    esp->_playStatusHandler(PB_CMD_NEXT_TRACK); // Fire the metadata trigger indirectly
             }
         }
         break;

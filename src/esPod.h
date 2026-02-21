@@ -12,6 +12,8 @@
 #include "esPod_conf.h"
 #include "esPod_utils.h"
 
+#include "freertos/ringbuf.h"
+
 class esPod
 {
     friend class L0x00; // Lingo 0x00 message handlers
@@ -19,7 +21,7 @@ class esPod
     friend class L0x04; // Lingo 0x04 message handlers
 
 public:
-    typedef void playStatusHandler_t(byte playControlCommand); // Type definition for the external callback to control playback FROM the espod object
+    typedef void playStatusHandler_t(PB_COMMAND playControlCommand); // Type definition for the external callback to control playback FROM the espod object
 
     // State variables
     bool extendedInterfaceModeActive = false; // Indicates if the extended interface mode is accessible (Lingo 0x04 mostly)
@@ -36,7 +38,7 @@ public:
     char playList[255] = "Spotify";  // Current playlist (always the same)
     char composer[255] = "Composer"; // Current track's composer (sometimes gets requested)
     uint32_t trackDuration = 1;      // Track duration in ms
-    uint32_t prevTrackDuration = 1;  // Previous track duration in ms
+    uint32_t prevTrackDuration = 0;  // Previous track duration in ms
     uint32_t playPosition = 0;       // Current playing position of the track in ms
 
     // Playback Engine
@@ -70,14 +72,19 @@ public:
 
     // Useful wrappers for A2DP and AVRC integration
 
-    /// @brief Sets the esPod instance to "PLAY"
-    void play();
+    /// @brief Sets the PB engine to play
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void play(bool noLoop = false);
 
-    /// @brief Sets the esPod instance to "PAUSED"
-    void pause();
+    /// @brief Sets the PB engine to pause
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void pause(bool noLoop = false);
 
-    /// @brief Sets the esPod instance to "STOPPED"
-    void stop();
+    /// @brief Sets the PB engine to Stop
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void stop(bool noLoop = false);
+
+    // Add other PB control subfunctions ?
 
     /// @brief Updates the play position (in ms) in the instance. Some internal checks are run to debounce double updates that might happen through AVRC
     /// @param position Current play position in ms
@@ -107,10 +114,12 @@ private:
     bool _trackDurationUpdated = false; // Internal flag if the trackDuration has been updated. Used to send relevant notifications if necessary
     void _checkAllMetaUpdated();
 
-    // FreeRTOS Queues
-    QueueHandle_t _cmdQueue;   // Incoming commands queue from accessory (car)
-    QueueHandle_t _txQueue;    // Outgoing response/commands queue from espod to car
-    QueueHandle_t _timerQueue; // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
+    // FreeRTOS Queues and RingBuffer
+    RingbufHandle_t _cmdRingBuffer;                     // Incoming commands ring buffer from accessory (car)
+    QueueHandle_t _txFreeBufferQueue;                   // Queue of pointers to free zones in _txBufferPool
+    byte _txBufferPool[TX_QUEUE_SIZE][MAX_PACKET_SIZE]; // Allocated memory buffer for TX commands
+    QueueHandle_t _txQueue;                             // Outgoing response/commands queue from espod to car
+    QueueHandle_t _timerQueue;                          // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
 
     // FreeRTOS tasks (and methods...)
     TaskHandle_t _rxTaskHandle;      // RX task handle (from car)
@@ -182,7 +191,7 @@ private:
     /// @brief Processes a valid packet and calls the relevant Lingo processor
     /// @param byteArray Checksum-validated packet starting at LingoID
     /// @param len Length of valid data in the packet
-    void _processPacket(const byte *byteArray, uint32_t len);
+    void _processPacket(const byte *byteArray, size_t len);
 
     bool _rxIncomplete = false; // Marker in case of incomplete command sequence reception
 
