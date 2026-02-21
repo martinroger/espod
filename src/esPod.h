@@ -1,9 +1,7 @@
 #pragma once
 
 // Ensure we are building for an ESP platform (ESP32 / ESP8266 / ESP-IDF)
-#if !defined(ESP_PLATFORM) && !defined(ESP32) && !defined(ESP8266) \
-    && !defined(ARDUINO_ARCH_ESP32) && !defined(ARDUINO_ARCH_ESP8266) \
-    && !defined(ESP_IDF_VERSION)
+#if !defined(ESP_PLATFORM) && !defined(ESP32) && !defined(ESP8266) && !defined(ARDUINO_ARCH_ESP32) && !defined(ARDUINO_ARCH_ESP8266) && !defined(ESP_IDF_VERSION)
 #error "esPod library requires an ESP target (ESP32/ESP8266/ESP-IDF). Compilation halted."
 #endif
 
@@ -56,7 +54,59 @@ public:
     uint32_t trackList[TOTAL_NUM_TRACKS] = {0};          // Initial track list is filled with 0 track indexs
     uint32_t trackListPosition = 0;                      // Locator for the position of the track ID in the TrackList (of IDs) (i.e. cursor)
 
+    /// @brief Constructor for the esPod class
+    /// @param targetSerial (Serial) stream on which the esPod will be communicating
+    esPod(Stream &targetSerial);
+
+    /// @brief Destructor for the esPod class. Normally not used.
+    ~esPod();
+
+    /// @brief Resets the esPod instance to a "clean" startup state
+    void resetState();
+
+    /// @brief Function to attach the playback controller that allows the espod instance to perform playback operations on the audio source
+    /// @param playHandler Type-function of a playStatusHandler, linking the espod instance to the audio source controls
+    void attachPlayControlHandler(playStatusHandler_t playHandler);
+
+    // Useful wrappers for A2DP and AVRC integration
+
+    /// @brief Sets the esPod instance to "PLAY"
+    void play();
+
+    /// @brief Sets the esPod instance to "PAUSED"
+    void pause();
+
+    /// @brief Sets the esPod instance to "STOPPED"
+    void stop();
+
+    /// @brief Updates the play position (in ms) in the instance. Some internal checks are run to debounce double updates that might happen through AVRC
+    /// @param position Current play position in ms
+    void updatePlayPosition(uint32_t position);
+
+    /// @brief Checks and updates the album name in the espod instance.
+    /// @param incAlbumName Char array of new album name
+    void updateAlbumName(const char *incAlbumName);
+
+    /// @brief Checks and updates the artist name in the espod instance.
+    /// @param incArtistName Char array of new artist name
+    void updateArtistName(const char *incArtistName);
+
+    /// @brief Checks and udpates the track title in the espod instance.
+    /// @param incTrackTitle Char array of new track title
+    void updateTrackTitle(const char *incTrackTitle);
+
+    /// @brief Checks and updates the track duration in the espod instance.
+    /// @param incTrackDuration Track duration in ms.
+    void updateTrackDuration(uint32_t incTrackDuration);
+
 private:
+    // Boolean flags for track change management
+    bool _albumNameUpdated = false;     // Internal flag if the albumName has been updated. Used to send relevant notifications if necessary
+    bool _artistNameUpdated = false;    // Internal flag if the artistName has been updated. Used to send relevant notifications if necessary
+    bool _trackTitleUpdated = false;    // Internal flag if the trackTitle has been updated. Used to send relevant notifications if necessary
+    bool _trackDurationUpdated = false; // Internal flag if the trackDuration has been updated. Used to send relevant notifications if necessary
+    void _checkAllMetaUpdated();
+
     // FreeRTOS Queues
     QueueHandle_t _cmdQueue;   // Incoming commands queue from accessory (car)
     QueueHandle_t _txQueue;    // Outgoing response/commands queue from espod to car
@@ -145,57 +195,4 @@ private:
 
     // Handler functions
     playStatusHandler_t *_playStatusHandler = nullptr; // Pointer to external callback used to let the espod instance control playback
-
-    // Boolean flags for track change management
-    bool _albumNameUpdated = false;     // Internal flag if the albumName has been updated. Used to send relevant notifications if necessary
-    bool _artistNameUpdated = false;    // Internal flag if the artistName has been updated. Used to send relevant notifications if necessary
-    bool _trackTitleUpdated = false;    // Internal flag if the trackTitle has been updated. Used to send relevant notifications if necessary
-    bool _trackDurationUpdated = false; // Internal flag if the trackDuration has been updated. Used to send relevant notifications if necessary
-    void _checkAllMetaUpdated();
-
-public:
-    /// @brief Constructor for the esPod class
-    /// @param targetSerial (Serial) stream on which the esPod will be communicating
-    esPod(Stream &targetSerial);
-
-    /// @brief Destructor for the esPod class. Normally not used.
-    ~esPod();
-
-    /// @brief Resets the esPod instance to a "clean" startup state
-    void resetState();
-
-    /// @brief Function to attach the playback controller that allows the espod instance to perform playback operations on the audio source
-    /// @param playHandler Type-function of a playStatusHandler, linking the espod instance to the audio source controls
-    void attachPlayControlHandler(playStatusHandler_t playHandler);
-
-    // Useful wrappers for A2DP and AVRC integration
-
-    /// @brief Sets the esPod instance to "PLAY"
-    void play();
-
-    /// @brief Sets the esPod instance to "PAUSED"
-    void pause();
-
-    /// @brief Sets the esPod instance to "STOPPED"
-    void stop();
-
-    /// @brief Updates the play position (in ms) in the instance. Some internal checks are run to debounce double updates that might happen through AVRC
-    /// @param position Current play position in ms
-    void updatePlayPosition(uint32_t position);
-
-    /// @brief Checks and updates the album name in the espod instance.
-    /// @param incAlbumName Char array of new album name
-    void updateAlbumName(const char *incAlbumName);
-
-    /// @brief Checks and updates the artist name in the espod instance.
-    /// @param incArtistName Char array of new artist name
-    void updateArtistName(const char *incArtistName);
-
-    /// @brief Checks and udpates the track title in the espod instance.
-    /// @param incTrackTitle Char array of new track title
-    void updateTrackTitle(const char *incTrackTitle);
-
-    /// @brief Checks and updates the track duration in the espod instance.
-    /// @param incTrackDuration Track duration in ms.
-    void updateTrackDuration(uint32_t incTrackDuration);
 };
