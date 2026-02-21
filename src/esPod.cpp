@@ -295,7 +295,7 @@ void esPod::_timerTask(void *pvParameters)
                 }
             }
         }
-        // vTaskDelay(pdMS_TO_TICKS(TIMER_INTERVAL_MS));
+        // vTaskDelay(pdMS_TO_TICKS(TIMER_INTERVAL_MS)); // Replaced by timeout in the queue
     }
 }
 #pragma endregion
