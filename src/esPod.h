@@ -21,7 +21,7 @@ class esPod
     friend class L0x04; // Lingo 0x04 message handlers
 
 public:
-    typedef void playStatusHandler_t(byte playControlCommand); // Type definition for the external callback to control playback FROM the espod object
+    typedef void playStatusHandler_t(PB_COMMAND playControlCommand); // Type definition for the external callback to control playback FROM the espod object
 
     // State variables
     bool extendedInterfaceModeActive = false; // Indicates if the extended interface mode is accessible (Lingo 0x04 mostly)
@@ -38,7 +38,7 @@ public:
     char playList[255] = "Spotify";  // Current playlist (always the same)
     char composer[255] = "Composer"; // Current track's composer (sometimes gets requested)
     uint32_t trackDuration = 1;      // Track duration in ms
-    uint32_t prevTrackDuration = 1;  // Previous track duration in ms
+    uint32_t prevTrackDuration = 0;  // Previous track duration in ms
     uint32_t playPosition = 0;       // Current playing position of the track in ms
 
     // Playback Engine
@@ -72,14 +72,19 @@ public:
 
     // Useful wrappers for A2DP and AVRC integration
 
-    /// @brief Sets the esPod instance to "PLAY"
-    void play();
+    /// @brief Sets the PB engine to play
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void play(bool noLoop = false);
 
-    /// @brief Sets the esPod instance to "PAUSED"
-    void pause();
+    /// @brief Sets the PB engine to pause
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void pause(bool noLoop = false);
 
-    /// @brief Sets the esPod instance to "STOPPED"
-    void stop();
+    /// @brief Sets the PB engine to Stop
+    /// @param noLoop if true, only sets the internal status. If false, attempts to also synchronise the playStatusHandler
+    void stop(bool noLoop = false);
+
+    // Add other PB control subfunctions ?
 
     /// @brief Updates the play position (in ms) in the instance. Some internal checks are run to debounce double updates that might happen through AVRC
     /// @param position Current play position in ms

@@ -78,15 +78,15 @@ enum DB_CATEGORY : byte
     DB_CAT_PODCAST = 0x08
 }; // Just a small selection
 
-enum A2DP_PB_CMD : byte
-{
-    A2DP_STOP = 0x00,
-    A2DP_PLAY = 0x01,
-    A2DP_PAUSE = 0x02,
-    A2DP_REWIND = 0x03,
-    A2DP_NEXT = 0x04,
-    A2DP_PREV = 0x05
-};
+// enum A2DP_PB_CMD : byte
+// {
+//     A2DP_STOP = 0x00,
+//     A2DP_PLAY = 0x01,
+//     A2DP_PAUSE = 0x02,
+//     A2DP_REWIND = 0x03,
+//     A2DP_NEXT = 0x04,
+//     A2DP_PREV = 0x05
+// };
 
 enum NOTIF_STATES : byte
 {

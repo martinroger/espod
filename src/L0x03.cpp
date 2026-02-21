@@ -84,11 +84,7 @@ void L0x03::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
         ESP_LOGI(__func__, "CMD: 0x%02x SetCurrentPlayingTrack index %d", cmdID, tempTrackIndex);
         if (esp->playStatus != PB_STATE_PLAYING)
         {
-            esp->playStatus = PB_STATE_PLAYING; // Playing status forced
-            if (esp->_playStatusHandler)
-            {
-                esp->_playStatusHandler(A2DP_PLAY); // Send play to the a2dp
-            }
+            esp->play();
         }
         if (tempTrackIndex == esp->trackList[(esp->trackListPosition + TOTAL_NUM_TRACKS - 1) % TOTAL_NUM_TRACKS]) // Desired trackIndex is the left entry
         {
@@ -111,7 +107,7 @@ void L0x03::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
             // Fire the A2DP when ready
             if (esp->_playStatusHandler)
-                esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                esp->_playStatusHandler(PB_CMD_PREVIOUS_TRACK); // Fire the metadata trigger indirectly
         }
         else if (tempTrackIndex == esp->currentTrackIndex) // Somehow reselecting the current track
         {
@@ -120,7 +116,7 @@ void L0x03::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
             // Fire the A2DP when ready
             if (esp->_playStatusHandler)
-                esp->_playStatusHandler(A2DP_PREV); // Fire the metadata trigger indirectly
+                esp->_playStatusHandler(PB_CMD_PREV); // Fire the metadata trigger indirectly
         }
         else // If it is not the previous or the current track, it automatically becomes a next track
         {
@@ -144,7 +140,7 @@ void L0x03::processLingo(esPod *esp, const byte *byteArray, uint32_t len)
 
             // Fire the A2DP when ready
             if (esp->_playStatusHandler)
-                esp->_playStatusHandler(A2DP_NEXT); // Fire the metadata trigger indirectly
+                esp->_playStatusHandler(PB_CMD_NEXT_TRACK); // Fire the metadata trigger indirectly
         }
     }
     break;

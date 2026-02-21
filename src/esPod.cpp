@@ -72,11 +72,6 @@ void esPod::resetState()
     // State variables
     extendedInterfaceModeActive = false;
 
-    // Metadata variables
-    trackDuration = 1;
-    prevTrackDuration = 1;
-    playPosition = 0;
-
     // Flags for track change management
     _albumNameUpdated = false;
     _artistNameUpdated = false;
@@ -84,7 +79,6 @@ void esPod::resetState()
     _trackDurationUpdated = false;
 
     // Playback Engine
-    playStatus = PB_STATE_PAUSED;
     playStatusNotificationState = NOTIF_OFF;
     trackChangeAckPending = 0x00;
     shuffleStatus = 0x00;
@@ -131,21 +125,34 @@ void esPod::attachPlayControlHandler(playStatusHandler_t playHandler)
     ESP_LOGD(__func__, "PlayControlHandler attached.");
 }
 
-void esPod::play()
+void esPod::play(bool noLoop)
 {
     playStatus = PB_STATE_PLAYING;
+    if(!noLoop && (_playStatusHandler!=NULL))
+    {
+        _playStatusHandler(PB_CMD_PLAY);
+    }
+
     ESP_LOGD(__func__, "esPod set to play.");
 }
 
-void esPod::pause()
+void esPod::pause(bool noLoop)
 {
     playStatus = PB_STATE_PAUSED;
+        if(!noLoop && (_playStatusHandler!=NULL))
+    {
+        _playStatusHandler(PB_CMD_PAUSE);
+    }
     ESP_LOGD(__func__, "esPod paused.");
 }
 
-void esPod::stop()
+void esPod::stop(bool noLoop)
 {
     playStatus = PB_STATE_STOPPED;
+        if(!noLoop && (_playStatusHandler!=NULL))
+    {
+        _playStatusHandler(PB_CMD_STOP);
+    }
     ESP_LOGD(__func__, " esPod stopped.");
 }
 
