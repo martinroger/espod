@@ -115,9 +115,11 @@ private:
     void _checkAllMetaUpdated();
 
     // FreeRTOS Queues and RingBuffer
-    RingbufHandle_t _cmdRingBuffer; // Incoming commands ring buffer from accessory (car)
-    QueueHandle_t _txQueue;         // Outgoing response/commands queue from espod to car
-    QueueHandle_t _timerQueue;      // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
+    RingbufHandle_t _cmdRingBuffer;                     // Incoming commands ring buffer from accessory (car)
+    QueueHandle_t _txFreeBufferQueue;                   // Queue of pointers to free zones in _txBufferPool
+    byte _txBufferPool[TX_QUEUE_SIZE][MAX_PACKET_SIZE]; // Allocated memory buffer for TX commands
+    QueueHandle_t _txQueue;                             // Outgoing response/commands queue from espod to car
+    QueueHandle_t _timerQueue;                          // Queue for processing "pending" commands timer callbacks (rather than in-ISR processing)
 
     // FreeRTOS tasks (and methods...)
     TaskHandle_t _rxTaskHandle;      // RX task handle (from car)
