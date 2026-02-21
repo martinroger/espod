@@ -16,9 +16,13 @@
 #ifndef INTERBYTE_TIMEOUT
 #define INTERBYTE_TIMEOUT 500
 #endif
+// FreeRTOS Ringbuffers
+#ifndef CMD_RING_BUF_SIZE
+#define CMD_RING_BUF_SIZE 8192
+#endif
 // FreeRTOS Queues
 #ifndef CMD_QUEUE_SIZE
-#define CMD_QUEUE_SIZE 32
+#define CMD_QUEUE_SIZE 16
 #endif
 #ifndef TX_QUEUE_SIZE
 #define TX_QUEUE_SIZE 32

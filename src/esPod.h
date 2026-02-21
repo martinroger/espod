@@ -12,6 +12,8 @@
 #include "esPod_conf.h"
 #include "esPod_utils.h"
 
+#include "freertos/ringbuf.h"
+
 class esPod
 {
     friend class L0x00; // Lingo 0x00 message handlers
@@ -107,6 +109,8 @@ private:
     bool _trackDurationUpdated = false; // Internal flag if the trackDuration has been updated. Used to send relevant notifications if necessary
     void _checkAllMetaUpdated();
 
+    RingbufHandle_t _cmdRingBuffer; // Incoming commands ring buffer from accessory (car)
+    
     // FreeRTOS Queues
     QueueHandle_t _cmdQueue;   // Incoming commands queue from accessory (car)
     QueueHandle_t _txQueue;    // Outgoing response/commands queue from espod to car
@@ -182,7 +186,7 @@ private:
     /// @brief Processes a valid packet and calls the relevant Lingo processor
     /// @param byteArray Checksum-validated packet starting at LingoID
     /// @param len Length of valid data in the packet
-    void _processPacket(const byte *byteArray, uint32_t len);
+    void _processPacket(const byte *byteArray, size_t len);
 
     bool _rxIncomplete = false; // Marker in case of incomplete command sequence reception
 
