@@ -212,7 +212,7 @@ void esPod::updateAlbumName(const char *incAlbumName)
     {
         if (!_albumNameUpdated)
         {
-            strcpy(albumName, incAlbumName);
+            strlcpy(albumName, incAlbumName,sizeof(albumName));
             _albumNameUpdated = true;
             ESP_LOGD(__func__, "Album name update to %s", albumName);
         }
@@ -223,8 +223,8 @@ void esPod::updateAlbumName(const char *incAlbumName)
     {
         if (strcmp(incAlbumName, albumName) != 0) // New Album Name
         {
-            strcpy(prevAlbumName, albumName); // Preserve the previous album name
-            strcpy(albumName, incAlbumName);  // Copy new album name
+            strlcpy(prevAlbumName, albumName,sizeof(prevAlbumName)); // Preserve the previous album name
+            strlcpy(albumName, incAlbumName,sizeof(albumName));  // Copy new album name
             _albumNameUpdated = true;
             ESP_LOGD(__func__, "Album name updated to %s", albumName);
         }
@@ -240,7 +240,7 @@ void esPod::updateArtistName(const char *incArtistName)
     {
         if (!_artistNameUpdated)
         {
-            strcpy(artistName, incArtistName);
+            strlcpy(artistName, incArtistName,sizeof(artistName));
             _artistNameUpdated = true;
             ESP_LOGD(__func__, "Artist name update to %s", artistName);
         }
@@ -251,8 +251,8 @@ void esPod::updateArtistName(const char *incArtistName)
     {
         if (strcmp(incArtistName, artistName) != 0) // New Artist Name
         {
-            strcpy(prevArtistName, artistName); // Preserve the previous artist name
-            strcpy(artistName, incArtistName);  // Copy new artist name
+            strlcpy(prevArtistName, artistName,sizeof(prevArtistName)); // Preserve the previous artist name
+            strlcpy(artistName, incArtistName,sizeof(artistName));  // Copy new artist name
             _artistNameUpdated = true;
             ESP_LOGD(__func__, "Artist name updated to %s", artistName);
         }
@@ -268,7 +268,7 @@ void esPod::updateTrackTitle(const char *incTrackTitle)
     {
         if (!_trackTitleUpdated) // Track title not yet updated
         {
-            strcpy(trackTitle, incTrackTitle);
+            strlcpy(trackTitle, incTrackTitle,sizeof(trackTitle));
             _trackTitleUpdated = true;
             ESP_LOGD(__func__, "Title update to %s", trackTitle);
         }
@@ -285,8 +285,8 @@ void esPod::updateTrackTitle(const char *incTrackTitle)
             currentTrackIndex = (currentTrackIndex + 1) % TOTAL_NUM_TRACKS;
             trackList[trackListPosition] = (currentTrackIndex);
 
-            strcpy(prevTrackTitle, trackTitle); // Preserve the previous track title
-            strcpy(trackTitle, incTrackTitle);  // Update the new track title
+            strlcpy(prevTrackTitle, trackTitle,sizeof(prevTrackTitle)); // Preserve the previous track title
+            strlcpy(trackTitle, incTrackTitle,sizeof(trackTitle));  // Update the new track title
             _trackTitleUpdated = true;
             ESP_LOGD(__func__, "Title update to %s", trackTitle);
         }
