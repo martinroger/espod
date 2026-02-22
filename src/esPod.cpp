@@ -5,48 +5,75 @@
 //-----------------------------------------------------------------------
 #pragma region Constructor, destructor, reset and external PB Contoller attach
 
-esPod::esPod(Stream &targetSerial)
-    : _targetSerial(targetSerial)
+esPod::esPod(uint8_t uartNum, int rxPin, int txPin, uint32_t baud)
+    : _uartPort((uart_port_t)uartNum), _rxPin(rxPin), _txPin(txPin), _baudrate(baud)
 {
-    // Create queues with pointer structures to byte arrays
-
-    _cmdRingBuffer = xRingbufferCreate(CMD_RING_BUF_SIZE, RINGBUF_TYPE_NOSPLIT);
-    _txQueue = xQueueCreate(TX_QUEUE_SIZE, sizeof(aapCommand));
-    _txFreeBufferQueue = xQueueCreate(TX_QUEUE_SIZE, sizeof(byte *));
-    _timerQueue = xQueueCreate(TIMER_QUEUE_SIZE, sizeof(TimerCallbackMessage));
-
-    // Pre-fill _txFreeBufferQueue with valid section points
-    if (_txFreeBufferQueue != NULL)
+    // Attempt to install and initialise the UART
+    if (uartNum > UART_NUM_MAX)
     {
-        for (int i = 0; i < TX_QUEUE_SIZE; i++)
-        {
-            byte *sectionPointer = _txBufferPool[i];
-            if (xQueueSend(_txFreeBufferQueue, &sectionPointer, 0) != pdTRUE)
-                ESP_LOGE(__func__, "Error initialising tx section pointers Queue!");
-        }
+        ESP_LOGE(__func__, "Invalid UART port number, defaulting to UART port 1");
+        _uartPort = UART_NUM_1;
     }
-
-    if (_txQueue == NULL || _timerQueue == NULL || _cmdRingBuffer == NULL || _txFreeBufferQueue == NULL) // If one failed to create
-        ESP_LOGE(__func__, "Could not create queues/ring buffers, tasks will not be created");
-    else // If none of them are null, create the tasks
+    // Sanity check if the driver is somehow already installed
+    if (uart_is_driver_installed(_uartPort))
     {
-        xTaskCreatePinnedToCore(_rxTask, "RX Task", RX_TASK_STACK_SIZE, this, RX_TASK_PRIORITY, &_rxTaskHandle, 1);
-        xTaskCreatePinnedToCore(_processTask, "Processor Task", PROCESS_TASK_STACK_SIZE, this, PROCESS_TASK_PRIORITY, &_processTaskHandle, 1);
-        xTaskCreatePinnedToCore(_txTask, "Transmit Task", TX_TASK_STACK_SIZE, this, TX_TASK_PRIORITY, &_txTaskHandle, 1);
-        xTaskCreatePinnedToCore(_timerTask, "Timer Task", TIMER_TASK_STACK_SIZE, this, TIMER_TASK_PRIORITY, &_timerTaskHandle, 1);
-
-        if (_rxTaskHandle == NULL || _processTaskHandle == NULL || _txTaskHandle == NULL || _timerTaskHandle == NULL)
-            ESP_LOGE(__func__, "Could not create tasks");
-        else
+        ESP_LOGW(__func__, "UART driver is already installed for this port, desinstalling...");
+        uart_driver_delete(_uartPort);
+    }
+    // Set up UART config
+    uart_config_t uart_config = {
+        .baud_rate = (int)_baudrate,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    esp_err_t uartRet = uart_driver_install(_uartPort, UART_RX_BUF_SIZE, UART_TX_BUF_SIZE, 20, &_uartEventQueue, 0);
+    if (uartRet != ESP_OK)
+    {
+        ESP_LOGE(__func__, "Could not install driver for esPod UART");
+        // return;
+    }
+    uartRet = uart_param_config(_uartPort, &uart_config);
+    if (uartRet != ESP_OK)
+    {
+        ESP_LOGE(__func__, "Could not configure the UART port for esPod");
+        // return;
+    }
+    uartRet = uart_set_pin(_uartPort, _txPin, _rxPin, -1, -1);
+    if (uartRet != ESP_OK)
+    {
+        ESP_LOGE(__func__, "Could not set the pins for the esPod UART");
+        // return;
+    }
+    // Trigger autobaud if necessary
+    if (_baudrate == 0)
+    {
+        ESP_LOGI(__func__, "Autobaud starting...");
+        uartRet = uart_detect_bitrate_start(_uartPort, NULL);
+        if (uartRet != ESP_OK)
         {
-            _pendingTimer_0x00 = xTimerCreate("Pending Timer 0x00", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x00);
-            _pendingTimer_0x03 = xTimerCreate("Pending Timer 0x03", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x03);
-            _pendingTimer_0x04 = xTimerCreate("Pending Timer 0x04", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x04);
-            if (_pendingTimer_0x00 == NULL || _pendingTimer_0x03 == NULL || _pendingTimer_0x04 == NULL)
-                ESP_LOGE(__func__, "Could not create timers");
+            ESP_LOGE(__func__, "Could not set up autobaud : %s", esp_err_to_name(uartRet));
         }
+        _isBaudReady = false;
+    }
+    else
+        _isBaudReady = true;
+
+    // Attempt to initialise the FreeRTOS objects
+    if (_initFreeRTOSStack() != ESP_OK)
+    {
+        ESP_LOGE(__func__, "Impossible to initialise the esPod object, returning...");
+        return;
     }
 }
+
+// Not used yet
+// esPod *esPod::createWithAutobaud(uint8_t uartNum, int rxPin, int txPin)
+// {
+//     return nullptr;
+// }
 
 esPod::~esPod()
 {
@@ -185,7 +212,7 @@ void esPod::updateAlbumName(const char *incAlbumName)
     {
         if (!_albumNameUpdated)
         {
-            strcpy(albumName, incAlbumName);
+            strlcpy(albumName, incAlbumName,sizeof(albumName));
             _albumNameUpdated = true;
             ESP_LOGD(__func__, "Album name update to %s", albumName);
         }
@@ -196,8 +223,8 @@ void esPod::updateAlbumName(const char *incAlbumName)
     {
         if (strcmp(incAlbumName, albumName) != 0) // New Album Name
         {
-            strcpy(prevAlbumName, albumName); // Preserve the previous album name
-            strcpy(albumName, incAlbumName);  // Copy new album name
+            strlcpy(prevAlbumName, albumName,sizeof(prevAlbumName)); // Preserve the previous album name
+            strlcpy(albumName, incAlbumName,sizeof(albumName));  // Copy new album name
             _albumNameUpdated = true;
             ESP_LOGD(__func__, "Album name updated to %s", albumName);
         }
@@ -213,7 +240,7 @@ void esPod::updateArtistName(const char *incArtistName)
     {
         if (!_artistNameUpdated)
         {
-            strcpy(artistName, incArtistName);
+            strlcpy(artistName, incArtistName,sizeof(artistName));
             _artistNameUpdated = true;
             ESP_LOGD(__func__, "Artist name update to %s", artistName);
         }
@@ -224,8 +251,8 @@ void esPod::updateArtistName(const char *incArtistName)
     {
         if (strcmp(incArtistName, artistName) != 0) // New Artist Name
         {
-            strcpy(prevArtistName, artistName); // Preserve the previous artist name
-            strcpy(artistName, incArtistName);  // Copy new artist name
+            strlcpy(prevArtistName, artistName,sizeof(prevArtistName)); // Preserve the previous artist name
+            strlcpy(artistName, incArtistName,sizeof(artistName));  // Copy new artist name
             _artistNameUpdated = true;
             ESP_LOGD(__func__, "Artist name updated to %s", artistName);
         }
@@ -241,7 +268,7 @@ void esPod::updateTrackTitle(const char *incTrackTitle)
     {
         if (!_trackTitleUpdated) // Track title not yet updated
         {
-            strcpy(trackTitle, incTrackTitle);
+            strlcpy(trackTitle, incTrackTitle,sizeof(trackTitle));
             _trackTitleUpdated = true;
             ESP_LOGD(__func__, "Title update to %s", trackTitle);
         }
@@ -258,8 +285,8 @@ void esPod::updateTrackTitle(const char *incTrackTitle)
             currentTrackIndex = (currentTrackIndex + 1) % TOTAL_NUM_TRACKS;
             trackList[trackListPosition] = (currentTrackIndex);
 
-            strcpy(prevTrackTitle, trackTitle); // Preserve the previous track title
-            strcpy(trackTitle, incTrackTitle);  // Update the new track title
+            strlcpy(prevTrackTitle, trackTitle,sizeof(prevTrackTitle)); // Preserve the previous track title
+            strlcpy(trackTitle, incTrackTitle,sizeof(trackTitle));  // Update the new track title
             _trackTitleUpdated = true;
             ESP_LOGD(__func__, "Title update to %s", trackTitle);
         }
@@ -340,16 +367,73 @@ void esPod::_checkAllMetaUpdated()
 //-----------------------------------------------------------------------
 #pragma region Tasks
 
+esp_err_t esPod::_initFreeRTOSStack()
+{
+    esp_err_t ret = ESP_OK;
+    // Create queues with pointer structures to byte arrays
+
+    _cmdRingBuffer = xRingbufferCreate(CMD_RING_BUF_SIZE, RINGBUF_TYPE_NOSPLIT);
+    _txQueue = xQueueCreate(TX_QUEUE_SIZE, sizeof(aapCommand));
+    _txFreeBufferQueue = xQueueCreate(TX_QUEUE_SIZE, sizeof(byte *));
+    _timerQueue = xQueueCreate(TIMER_QUEUE_SIZE, sizeof(TimerCallbackMessage));
+
+    // Pre-fill _txFreeBufferQueue with valid section points
+    if (_txFreeBufferQueue != NULL)
+    {
+        for (int i = 0; i < TX_QUEUE_SIZE; i++)
+        {
+            byte *sectionPointer = _txBufferPool[i];
+            if (xQueueSend(_txFreeBufferQueue, &sectionPointer, 0) != pdTRUE)
+                ESP_LOGE(__func__, "Error initialising tx section pointers Queue!");
+        }
+    }
+
+    if (_txQueue == NULL || _timerQueue == NULL || _cmdRingBuffer == NULL || _txFreeBufferQueue == NULL) // If one failed to create
+    {
+        ESP_LOGE(__func__, "Could not create queues/ring buffers, tasks will not be created");
+        ret = ESP_FAIL;
+    }
+
+    else // If none of them are null, create the tasks
+    {
+        xTaskCreatePinnedToCore(_rxTask, "RX Task", RX_TASK_STACK_SIZE, this, RX_TASK_PRIORITY, &_rxTaskHandle, 1);
+        xTaskCreatePinnedToCore(_processTask, "Processor Task", PROCESS_TASK_STACK_SIZE, this, PROCESS_TASK_PRIORITY, &_processTaskHandle, 1);
+        xTaskCreatePinnedToCore(_txTask, "Transmit Task", TX_TASK_STACK_SIZE, this, TX_TASK_PRIORITY, &_txTaskHandle, 1);
+        xTaskCreatePinnedToCore(_timerTask, "Timer Task", TIMER_TASK_STACK_SIZE, this, TIMER_TASK_PRIORITY, &_timerTaskHandle, 1);
+
+        if (_rxTaskHandle == NULL || _processTaskHandle == NULL || _txTaskHandle == NULL || _timerTaskHandle == NULL)
+        {
+            ESP_LOGE(__func__, "Could not create tasks");
+            ret = ESP_FAIL;
+        }
+
+        else
+        {
+            _pendingTimer_0x00 = xTimerCreate("Pending Timer 0x00", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x00);
+            _pendingTimer_0x03 = xTimerCreate("Pending Timer 0x03", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x03);
+            _pendingTimer_0x04 = xTimerCreate("Pending Timer 0x04", pdMS_TO_TICKS(1000), pdFALSE, this, esPod::_pendingTimerCallback_0x04);
+            if (_pendingTimer_0x00 == NULL || _pendingTimer_0x03 == NULL || _pendingTimer_0x04 == NULL)
+            {
+                ESP_LOGE(__func__, "Could not create timers");
+                ret = ESP_FAIL;
+            }
+        }
+    }
+    return ret;
+}
+
 void esPod::_rxTask(void *pvParameters)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvParameters);
-
+    esPod *inst = static_cast<esPod *>(pvParameters);
+    uart_event_t uartEvent;
+    size_t bufferedSize;
     byte prevByte = 0x00;
     byte incByte = 0x00;
     byte buf[MAX_PACKET_SIZE] = {0x00};
     uint32_t expLength = 0;
     uint32_t cursor = 0;
-
+    TickType_t waitTime = inst->_isBaudReady ? portMAX_DELAY : pdMS_TO_TICKS(1000);
+    bool serialTimedOut = false;
     unsigned long lastByteRX = millis();   // Last time a byte was RXed in a packet
     unsigned long lastActivity = millis(); // Last time any RX activity was detected
 
@@ -370,12 +454,178 @@ void esPod::_rxTask(void *pvParameters)
         }
 #endif
 
-        // If the esPod is disabled, flush the RX buffer and wait for 2*RX_TASK_INTERVAL_MS before checking again
-        if (esPodInstance->disabled)
+        // If the baudrate is somewhat set
+        if (inst->_isBaudReady)
         {
-            while (esPodInstance->_targetSerial.available())
+            // Adjust the waiting time to interbyte timeout if the packet transmission is interrupted, otherwise hardware timeout
+            waitTime = inst->_rxIncomplete ? pdMS_TO_TICKS(INTERBYTE_TIMEOUT) : pdMS_TO_TICKS(SERIAL_TIMEOUT);
+            waitTime = serialTimedOut ? portMAX_DELAY : waitTime;
+        }
+        if (xQueueReceive(inst->_uartEventQueue, (void *)&uartEvent, waitTime) == pdTRUE)
+        {
+            serialTimedOut = false;
+            switch (uartEvent.type)
             {
-                esPodInstance->_targetSerial.read();
+            case UART_DATA:
+            {
+                // Retrieve buffered size directly from event information
+                bufferedSize = uartEvent.size;
+                // uart_get_buffered_data_len(inst->_uartPort, &bufferedSize);
+
+                // Instance is disabled
+                if (inst->disabled)
+                {
+                    uart_flush_input(inst->_uartPort);
+                    break;
+                }
+
+                while (bufferedSize--)
+                {
+                    uart_read_bytes(inst->_uartPort, &incByte, 1, 0);
+                    // If we are not in the middle of a RX, and we receive a 0xFF 0x55, start sequence, reset expected length and position cursor
+                    if (prevByte == 0xFF && incByte == 0x55 && !inst->_rxIncomplete)
+                    {
+                        inst->_rxIncomplete = true;
+                        cursor = 0;
+                        expLength = 0;
+                    }
+                    else if (inst->_rxIncomplete) // Mid-packet
+                    {
+                        // Expected length has not been received yet
+                        if (expLength == 0 && cursor == 0)
+                        {
+                            expLength = incByte; // First byte after 0xFF 0x55
+                            if (expLength > MAX_PACKET_SIZE)
+                            {
+                                ESP_LOGW(__func__, "Expected length is too long, discarding packet");
+                                inst->_rxIncomplete = false;
+                                // TODO: Send a NACK to the Accessory
+                            }
+                            else if (expLength == 0)
+                            {
+                                ESP_LOGW(__func__, "Expected length is 0, discarding packet");
+                                inst->_rxIncomplete = false;
+                                // TODO: Send a NACK to the Accessory
+                            }
+                        }
+                        else // Length is already received
+                        {
+                            buf[cursor++] = incByte;
+                            if (cursor == expLength + 1)
+                            {
+                                // We have received the expected length + checksum
+                                inst->_rxIncomplete = false;
+                                // Check the checksum
+                                byte calcChecksum = esPod::_checksum(buf, expLength);
+                                if (calcChecksum == incByte) // Checksum OK
+                                {
+                                    // Checksum is correct, send the packet to the processing queue
+                                    // RingBuffer method
+                                    if (xRingbufferSend(inst->_cmdRingBuffer, buf, expLength, pdMS_TO_TICKS(5)) != pdTRUE)
+                                        ESP_LOGW(__func__, "Ringbuffer full, dropping packet");
+                                    else
+                                        ESP_LOGD(__func__, "Packet sent to RingBuffer");
+                                }
+                                else // Checksum mismatch
+                                {
+                                    ESP_LOGW(__func__, "Checksum mismatch, discarding packet");
+                                    // TODO: Send a NACK to the Accessory
+                                }
+                            }
+                        }
+                    }
+                    else // We are not in the middle of a packet, but we received a byte
+                    {
+                        ESP_LOGD(__func__, "Received byte 0x%02X outside of a packet, discarding", incByte);
+                    }
+                    // Always update the previous byte
+                    prevByte = incByte;
+                }
+            }
+            break;
+
+            case UART_BREAK:
+                if (inst->_isBaudReady)
+                    ESP_LOGE(__func__, "UART BREAK event");
+                break;
+
+            case UART_BUFFER_FULL:
+                if (inst->_isBaudReady)
+                    ESP_LOGE(__func__, "UART BUFFER FULL event");
+                break;
+
+            case UART_FIFO_OVF:
+                if (inst->_isBaudReady)
+                    ESP_LOGE(__func__, "UART FIFO overflow event");
+                break;
+
+            case UART_FRAME_ERR:
+                if (inst->_isBaudReady)
+                    ESP_LOGE(__func__, "UART Frame error event");
+                break;
+
+            case UART_PARITY_ERR:
+                if (inst->_isBaudReady)
+                    ESP_LOGE(__func__, "UART PARITY error event");
+                break;
+
+            default:
+                ESP_LOGW(__func__, "UART event : %d", uartEvent.type);
+                break;
+            }
+        }
+        else // Nothing came in the queue in time, handle the various timeouts
+        {
+            if (!inst->_isBaudReady) // Baudrate was not yet ready
+            {
+                uart_bitrate_res_t bitrateDetResults;
+                esp_err_t uartDetErr = uart_detect_bitrate_stop(inst->_uartPort, false, &bitrateDetResults);
+                if (uartDetErr != ESP_OK)
+                {
+                    ESP_LOGE(__func__, "Error in the bitrate detection : %s", esp_err_to_name(uartDetErr));
+                    uart_set_baudrate(inst->_uartPort, 19200);
+                    inst->_isBaudReady = true;
+                }
+                else if (bitrateDetResults.edge_cnt > 0)
+                {
+                    uint32_t baudrate = bitrateDetResults.clk_freq_hz * 2 / (bitrateDetResults.low_period + bitrateDetResults.high_period);
+                    ESP_LOGI(__func__, "Baudrate detected : %lu", baudrate);
+                    uart_set_baudrate(inst->_uartPort, baudrate);
+                    inst->_isBaudReady = true;
+                }
+                else
+                {
+                    ESP_LOGW(__func__, "Restarting bitrate detection");
+                    uart_detect_bitrate_start(inst->_uartPort, NULL);
+                }
+            }
+            else if (inst->_rxIncomplete)
+            {
+                ESP_LOGW(__func__, "Packet incomplete, discarding");
+                inst->_rxIncomplete = false;
+                // cmd.payload = nullptr;
+                // cmd.length = 0;
+                // TODO: Send a NACK to the Accessory
+            }
+            else // Serial timeout, no data on the line
+            {
+#ifndef NO_RESET_ON_SERIAL_TIMEOUT
+                ESP_LOGW(__func__, "No activity in %lu ms, resetting RX state", SERIAL_TIMEOUT);
+                inst->resetState();
+#else
+                ESP_LOGW(__func__, "No activity in %lu ms, no reset.");
+#endif
+                serialTimedOut = true;
+            }
+        }
+
+        /*
+        // If the esPod is disabled, flush the RX buffer and wait for 2*RX_TASK_INTERVAL_MS before checking again
+        if (inst->disabled)
+        {
+            while (inst->_targetSerial.available())
+            {
+                inst->_targetSerial.read();
             }
             vTaskDelay(pdMS_TO_TICKS(2 * RX_TASK_INTERVAL_MS)); // Watchdog necessity
             continue;
@@ -383,20 +633,20 @@ void esPod::_rxTask(void *pvParameters)
         else // esPod is enabled, process away !
         {
             // Use of while instead of if()
-            while (esPodInstance->_targetSerial.available())
+            while (inst->_targetSerial.available())
             {
                 // Timestamping the last activity on RX
                 lastActivity = millis();
-                incByte = esPodInstance->_targetSerial.read();
+                incByte = inst->_targetSerial.read();
                 // If we are not in the middle of a RX, and we receive a 0xFF 0x55, start sequence, reset expected length and position cursor
-                if (prevByte == 0xFF && incByte == 0x55 && !esPodInstance->_rxIncomplete)
+                if (prevByte == 0xFF && incByte == 0x55 && !inst->_rxIncomplete)
                 {
                     lastByteRX = millis();
-                    esPodInstance->_rxIncomplete = true;
+                    inst->_rxIncomplete = true;
                     expLength = 0;
                     cursor = 0;
                 }
-                else if (esPodInstance->_rxIncomplete)
+                else if (inst->_rxIncomplete)
                 {
                     // Timestamping the last byte received
                     lastByteRX = millis();
@@ -407,13 +657,13 @@ void esPod::_rxTask(void *pvParameters)
                         if (expLength > MAX_PACKET_SIZE)
                         {
                             ESP_LOGW(__func__, "Expected length is too long, discarding packet");
-                            esPodInstance->_rxIncomplete = false;
+                            inst->_rxIncomplete = false;
                             // TODO: Send a NACK to the Accessory
                         }
                         else if (expLength == 0)
                         {
                             ESP_LOGW(__func__, "Expected length is 0, discarding packet");
-                            esPodInstance->_rxIncomplete = false;
+                            inst->_rxIncomplete = false;
                             // TODO: Send a NACK to the Accessory
                         }
                     }
@@ -423,14 +673,14 @@ void esPod::_rxTask(void *pvParameters)
                         if (cursor == expLength + 1)
                         {
                             // We have received the expected length + checksum
-                            esPodInstance->_rxIncomplete = false;
+                            inst->_rxIncomplete = false;
                             // Check the checksum
                             byte calcChecksum = esPod::_checksum(buf, expLength);
                             if (calcChecksum == incByte)
                             {
                                 // Checksum is correct, send the packet to the processing queue
                                 // RingBuffer method
-                                if (xRingbufferSend(esPodInstance->_cmdRingBuffer, buf, expLength, pdMS_TO_TICKS(5)) != pdTRUE)
+                                if (xRingbufferSend(inst->_cmdRingBuffer, buf, expLength, pdMS_TO_TICKS(5)) != pdTRUE)
                                     ESP_LOGW(__func__, "Ringbuffer full, dropping packet");
                                 else
                                     ESP_LOGD(__func__, "Packet sent to RingBuffer");
@@ -450,10 +700,10 @@ void esPod::_rxTask(void *pvParameters)
                 // Always update the previous byte
                 prevByte = incByte;
             }
-            if (esPodInstance->_rxIncomplete && millis() - lastByteRX > INTERBYTE_TIMEOUT) // If we are in the middle of a packet and we haven't received a byte in 1s, discard the packet
+            if (inst->_rxIncomplete && millis() - lastByteRX > INTERBYTE_TIMEOUT) // If we are in the middle of a packet and we haven't received a byte in 1s, discard the packet
             {
                 ESP_LOGW(__func__, "Packet incomplete, discarding");
-                esPodInstance->_rxIncomplete = false;
+                inst->_rxIncomplete = false;
                 // cmd.payload = nullptr;
                 // cmd.length = 0;
                 // TODO: Send a NACK to the Accessory
@@ -464,17 +714,18 @@ void esPod::_rxTask(void *pvParameters)
                 lastActivity = millis();
 #ifndef NO_RESET_ON_SERIAL_TIMEOUT
                 ESP_LOGW(__func__, "No activity in %lu ms, resetting RX state", SERIAL_TIMEOUT);
-                esPodInstance->resetState();
+                inst->resetState();
 #endif
             }
             vTaskDelay(pdMS_TO_TICKS(RX_TASK_INTERVAL_MS));
         }
+            */
     }
 }
 
 void esPod::_processTask(void *pvParameters)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvParameters);
+    esPod *inst = static_cast<esPod *>(pvParameters);
     size_t incCmdSize;
 
 #ifdef STACK_HIGH_WATERMARK_LOG
@@ -493,20 +744,20 @@ void esPod::_processTask(void *pvParameters)
             ESP_LOGI("HWM", "Process Task High Watermark: %d, used stack: %d", minHightWaterMark, PROCESS_TASK_STACK_SIZE - minHightWaterMark);
         }
 #endif
-        byte *incCmd = (byte *)xRingbufferReceive(esPodInstance->_cmdRingBuffer, &incCmdSize, portMAX_DELAY);
+        byte *incCmd = (byte *)xRingbufferReceive(inst->_cmdRingBuffer, &incCmdSize, portMAX_DELAY);
 
         if (incCmd != NULL)
         {
-            if (!esPodInstance->disabled)
-                esPodInstance->_processPacket(incCmd, incCmdSize);
-            vRingbufferReturnItem(esPodInstance->_cmdRingBuffer, (void *)incCmd);
+            if (!inst->disabled)
+                inst->_processPacket(incCmd, incCmdSize);
+            vRingbufferReturnItem(inst->_cmdRingBuffer, (void *)incCmd);
         }
     }
 }
 
 void esPod::_txTask(void *pvParameters)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvParameters);
+    esPod *inst = static_cast<esPod *>(pvParameters);
     aapCommand txCmd;
 
 #ifdef STACK_HIGH_WATERMARK_LOG
@@ -527,66 +778,66 @@ void esPod::_txTask(void *pvParameters)
 #endif
 
         // Retrieve from the queue and send the packet
-        if (xQueueReceive(esPodInstance->_txQueue, &txCmd, portMAX_DELAY) == pdTRUE)
+        if (xQueueReceive(inst->_txQueue, &txCmd, portMAX_DELAY) == pdTRUE)
         {
-            if (!esPodInstance->disabled)
+            if (!inst->disabled)
             {
                 while (!(
-                    !esPodInstance->_rxIncomplete &&
-                    esPodInstance->_pendingCmdId_0x00 == 0x00 &&
-                    esPodInstance->_pendingCmdId_0x03 == 0x00 &&
-                    esPodInstance->_pendingCmdId_0x04 == 0x00))
+                    !inst->_rxIncomplete &&
+                    inst->_pendingCmdId_0x00 == 0x00 &&
+                    inst->_pendingCmdId_0x03 == 0x00 &&
+                    inst->_pendingCmdId_0x04 == 0x00))
                 {
                     // Yield until true
                     vTaskDelay(pdMS_TO_TICKS(1));
                 }
                 // Send the packet
-                esPodInstance->_sendPacket(txCmd.payload, txCmd.length);
+                inst->_sendPacket(txCmd.payload, txCmd.length);
             }
             // Free the memory allocated for the payload, return free section pointer.
-            xQueueSend(esPodInstance->_txFreeBufferQueue, &txCmd.payload, 0);
+            xQueueSend(inst->_txFreeBufferQueue, &txCmd.payload, 0);
         }
     }
 }
 
 void esPod::_timerTask(void *pvParameters)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvParameters);
+    esPod *inst = static_cast<esPod *>(pvParameters);
     TimerCallbackMessage msg;
 
     while (true)
     {
-        if (xQueueReceive(esPodInstance->_timerQueue, &msg, portMAX_DELAY) == pdTRUE)
+        if (xQueueReceive(inst->_timerQueue, &msg, portMAX_DELAY) == pdTRUE)
         {
             if (msg.targetLingo == 0x00)
             {
-                // esPodInstance->L0x00_0x02_iPodAck(iPodAck_OK, msg.cmdID);
-                L0x00::_0x02_iPodAck(esPodInstance, iPodAck_OK, msg.cmdID);
+                // inst->L0x00_0x02_iPodAck(iPodAck_OK, msg.cmdID);
+                L0x00::_0x02_iPodAck(inst, iPodAck_OK, msg.cmdID);
             }
             else if (msg.targetLingo == 0x04)
             {
-                // esPodInstance->L0x04_0x01_iPodAck(iPodAck_OK, msg.cmdID);
-                L0x04::_0x01_iPodAck(esPodInstance, iPodAck_OK, msg.cmdID);
-                if (msg.cmdID == esPodInstance->trackChangeAckPending)
+                // inst->L0x04_0x01_iPodAck(iPodAck_OK, msg.cmdID);
+                L0x04::_0x01_iPodAck(inst, iPodAck_OK, msg.cmdID);
+                if (msg.cmdID == inst->trackChangeAckPending)
                 {
-                    esPodInstance->trackChangeAckPending = 0x00;
-                    esPodInstance->_albumNameUpdated = false;
-                    esPodInstance->_artistNameUpdated = false;
-                    esPodInstance->_trackTitleUpdated = false;
-                    esPodInstance->_trackDurationUpdated = false;
+                    inst->trackChangeAckPending = 0x00;
+                    inst->_albumNameUpdated = false;
+                    inst->_artistNameUpdated = false;
+                    inst->_trackTitleUpdated = false;
+                    inst->_trackDurationUpdated = false;
                 }
             }
             else if (msg.targetLingo == 0x03)
             {
-                // esPodInstance->L0x04_0x01_iPodAck(iPodAck_OK, msg.cmdID);
-                L0x03::_0x00_iPodAck(esPodInstance, iPodAck_OK, msg.cmdID);
-                if (msg.cmdID == esPodInstance->trackChangeAckPending)
+                // inst->L0x04_0x01_iPodAck(iPodAck_OK, msg.cmdID);
+                L0x03::_0x00_iPodAck(inst, iPodAck_OK, msg.cmdID);
+                if (msg.cmdID == inst->trackChangeAckPending)
                 {
-                    esPodInstance->trackChangeAckPending = 0x00;
-                    esPodInstance->_albumNameUpdated = false;
-                    esPodInstance->_artistNameUpdated = false;
-                    esPodInstance->_trackTitleUpdated = false;
-                    esPodInstance->_trackDurationUpdated = false;
+                    inst->trackChangeAckPending = 0x00;
+                    inst->_albumNameUpdated = false;
+                    inst->_artistNameUpdated = false;
+                    inst->_trackTitleUpdated = false;
+                    inst->_trackDurationUpdated = false;
                 }
             }
         }
@@ -598,23 +849,23 @@ void esPod::_timerTask(void *pvParameters)
 
 void esPod::_pendingTimerCallback_0x00(TimerHandle_t xTimer)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
-    TimerCallbackMessage msg = {esPodInstance->_pendingCmdId_0x00, 0x00};
-    xQueueSendFromISR(esPodInstance->_timerQueue, &msg, NULL);
+    esPod *inst = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
+    TimerCallbackMessage msg = {inst->_pendingCmdId_0x00, 0x00};
+    xQueueSendFromISR(inst->_timerQueue, &msg, NULL);
 }
 
 void esPod::_pendingTimerCallback_0x03(TimerHandle_t xTimer)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
-    TimerCallbackMessage msg = {esPodInstance->_pendingCmdId_0x03, 0x03};
-    xQueueSendFromISR(esPodInstance->_timerQueue, &msg, NULL);
+    esPod *inst = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
+    TimerCallbackMessage msg = {inst->_pendingCmdId_0x03, 0x03};
+    xQueueSendFromISR(inst->_timerQueue, &msg, NULL);
 }
 
 void esPod::_pendingTimerCallback_0x04(TimerHandle_t xTimer)
 {
-    esPod *esPodInstance = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
-    TimerCallbackMessage msg = {esPodInstance->_pendingCmdId_0x04, 0x04};
-    xQueueSendFromISR(esPodInstance->_timerQueue, &msg, NULL);
+    esPod *inst = static_cast<esPod *>(pvTimerGetTimerID(xTimer));
+    TimerCallbackMessage msg = {inst->_pendingCmdId_0x04, 0x04};
+    xQueueSendFromISR(inst->_timerQueue, &msg, NULL);
 }
 #pragma endregion
 
@@ -648,7 +899,8 @@ void esPod::_sendPacket(const byte *byteArray, uint32_t len)
     }
     tempBuf[3 + len] = esPod::_checksum(byteArray, len);
 
-    _targetSerial.write(tempBuf, finalLength);
+    uart_write_bytes(_uartPort, tempBuf, finalLength);
+    // _targetSerial.write(tempBuf, finalLength);
 }
 
 void esPod::_queuePacket(const byte *byteArray, uint32_t len)

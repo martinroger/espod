@@ -13,6 +13,7 @@
 #include "esPod_utils.h"
 
 #include "freertos/ringbuf.h"
+#include "driver/uart.h"
 
 class esPod
 {
@@ -56,9 +57,23 @@ public:
     uint32_t trackList[TOTAL_NUM_TRACKS] = {0};          // Initial track list is filled with 0 track indexs
     uint32_t trackListPosition = 0;                      // Locator for the position of the track ID in the TrackList (of IDs) (i.e. cursor)
 
-    /// @brief Constructor for the esPod class
-    /// @param targetSerial (Serial) stream on which the esPod will be communicating
-    esPod(Stream &targetSerial);
+    // /// @brief Constructor for the esPod class
+    // /// @param targetSerial (Serial) stream on which the esPod will be communicating
+    // esPod(Stream &targetSerial);
+
+    /// @brief Master constructor for the esPod class
+    /// @param uartNum UART interface number to reserve for the communication
+    /// @param rxPin RX Pin for the UART interface
+    /// @param txPin TX Pin for the UART interface
+    /// @param baud Target baudrate for the communication. 0 sets the autobaud detection on
+    esPod(uint8_t uartNum = 1, int rxPin = -1, int txPin = -1, uint32_t baud = 19200);
+
+    // /// @brief Factory function to create a new esPod object with autobaud capabilities
+    // /// @param uartNum UART interface number to reserve for the communication
+    // /// @param rxPin RX Pin for the UART interface
+    // /// @param txPin TX Pin for the UART interface
+    // /// @return An esPod object to maintain with the syntax : "esPod* myPod = esPod::createWithAutobaud(...)" and to delete when unused : "delete myPod"
+    // static esPod* createWithAutobaud(uint8_t uartNum = 1, int rxPin = -1, int txPin = -1);
 
     /// @brief Destructor for the esPod class. Normally not used.
     ~esPod();
@@ -107,6 +122,14 @@ public:
     void updateTrackDuration(uint32_t incTrackDuration);
 
 private:
+    // UART parameters
+    uart_port_t _uartPort;
+    int _rxPin;
+    int _txPin;
+    uint32_t _baudrate;
+    bool _isBaudReady = false; // Flag to mark if the baudrate is set or detected already
+    QueueHandle_t _uartEventQueue;
+
     // Boolean flags for track change management
     bool _albumNameUpdated = false;     // Internal flag if the albumName has been updated. Used to send relevant notifications if necessary
     bool _artistNameUpdated = false;    // Internal flag if the artistName has been updated. Used to send relevant notifications if necessary
@@ -126,6 +149,10 @@ private:
     TaskHandle_t _processTaskHandle; // Command dispatcher/processor task handle
     TaskHandle_t _txTaskHandle;      // TX task handle (to car)
     TaskHandle_t _timerTaskHandle;   // Pending command timer task handle
+
+    /// @brief Handles the creation of all the FreeRTOS objects and tasks
+    /// @return ESP_FAIL if one fails, ESP_OK otherwise
+    esp_err_t _initFreeRTOSStack();
 
     /// @brief RX Task, sifts through the incoming serial data and compiles packets that pass the checksum and passes them to the processing Queue _cmdQueue. Also handles timeouts and can trigger state resets.
     /// @param pvParameters Unused
@@ -165,7 +192,7 @@ private:
     byte _pendingCmdId_0x04; // Command ID that is pending in Lingo 0x04
 
     // Serial to the car
-    Stream &_targetSerial;
+    // Stream &_targetSerial;
 
     /// @brief //Calculates the checksum of a packet that starts from i=0 ->Lingo to i=len -> Checksum
     /// @param byteArray Array from Lingo byte to Checksum byte
